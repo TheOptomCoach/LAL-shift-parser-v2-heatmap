@@ -17,6 +17,7 @@
     }
     textarea { width: 100%; height: 150px; }
     button, select { margin-top: 5px; width: 100%; }
+    #loading { margin-top: 5px; color: red; font-weight: bold; display: none; }
   </style>
 </head>
 <body>
@@ -29,6 +30,7 @@
     <option value="rate">Average Rate</option>
     <option value="company">Companies</option>
   </select>
+  <div id="loading">Loading...</div>
 </div>
 
 <div id="map"></div>
@@ -36,8 +38,7 @@
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
 <script>
-const map = L.map('map').setView([52.3555, -1.1743], 6); // UK center
-
+const map = L.map('map').setView([52.3555, -1.1743], 6);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap'
 }).addTo(map);
@@ -45,18 +46,24 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 let markersLayer = L.layerGroup().addTo(map);
 
 document.getElementById('parseBtn').addEventListener('click', async () => {
-  const raw = document.getElementById('rawData').value;
-  const shifts = parseData(raw);
-  const locations = await geocodeLocations(shifts);
-  updateMap(locations);
+  await updateAll();
 });
 
 document.getElementById('mode').addEventListener('change', async () => {
+  await updateAll();
+});
+
+async function updateAll() {
   const raw = document.getElementById('rawData').value;
   const shifts = parseData(raw);
+
+  document.getElementById('loading').style.display = 'block';
+
   const locations = await geocodeLocations(shifts);
   updateMap(locations);
-});
+
+  document.getElementById('loading').style.display = 'none';
+}
 
 function parseData(raw) {
   const lines = raw.split('\n').map(line => line.trim()).filter(line => line !== '');
@@ -96,27 +103,37 @@ function parseData(raw) {
 
 async function geocodeLocations(shifts) {
   const locationMap = {};
+  const uniqueLocations = {};
 
+  // Aggregate data first
   for (const shift of shifts) {
-    if (!locationMap[shift.location]) {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(shift.location + ", UK")}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data && data.length > 0) {
-        locationMap[shift.location] = {
-          lat: parseFloat(data[0].lat),
-          lon: parseFloat(data[0].lon),
-          rates: [shift.rate],
-          companies: new Set([shift.company]),
-          count: 1
-        };
-      }
-    } else {
-      locationMap[shift.location].rates.push(shift.rate);
-      locationMap[shift.location].companies.add(shift.company);
-      locationMap[shift.location].count++;
+    if (!uniqueLocations[shift.location]) {
+      uniqueLocations[shift.location] = {
+        shifts: [],
+        companies: new Set()
+      };
     }
+    uniqueLocations[shift.location].shifts.push(shift.rate);
+    uniqueLocations[shift.location].companies.add(shift.company);
   }
+
+  // Parallel geocode
+  const geocodePromises = Object.keys(uniqueLocations).map(async loc => {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(loc + ", UK")}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data && data.length > 0) {
+      locationMap[loc] = {
+        lat: parseFloat(data[0].lat),
+        lon: parseFloat(data[0].lon),
+        rates: uniqueLocations[loc].shifts,
+        companies: uniqueLocations[loc].companies,
+        count: uniqueLocations[loc].shifts.length
+      };
+    }
+  });
+
+  await Promise.all(geocodePromises);
 
   return Object.entries(locationMap).map(([loc, data]) => ({
     name: loc,
@@ -130,12 +147,11 @@ async function geocodeLocations(shifts) {
 
 function updateMap(locations) {
   markersLayer.clearLayers();
-
   const mode = document.getElementById('mode').value;
 
   if (mode === 'density') {
     for (const loc of locations) {
-      const radius = 5 + loc.count * 3; // Adjust size based on count
+      const radius = 5 + loc.count * 3;
       const marker = L.circleMarker([loc.lat, loc.lon], {
         radius: radius,
         color: "blue",
