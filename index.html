@@ -1,46 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>UK Locum Optometry Shifts Heatmap</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<style>
+body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+#map { height: 100vh; }
+#controls {
+position: absolute;
+top: 10px; left: 10px;
+background: white; padding: 10px; z-index: 1000;
+border-radius: 5px;
+box-shadow: 0 0 5px rgba(0,0,0,0.3);
 width: 300px;
 }
 textarea { width: 100%; height: 150px; }
-    button, select { margin-top: 5px; width: 100%; }
-    button, select, progress { margin-top: 5px; width: 100%; }
-#loading { margin-top: 5px; color: red; font-weight: bold; display: none; }
+button, select { margin-top: 5px; width: 100%; }
+    #loading { margin-top: 5px; color: red; font-weight: bold; display: none; }
 </style>
 </head>
-@@ -30,7 +30,7 @@
+<body>
+
+<div id="controls">
+<textarea id="rawData" placeholder="Paste your raw shift data here..."></textarea><br>
+<button id="parseBtn">Parse & Update Map</button>
+<select id="mode">
+<option value="density">Density</option>
 <option value="rate">Average Rate</option>
 <option value="company">Companies</option>
 </select>
   <div id="loading">Loading...</div>
-  <progress id="progressBar" value="0" max="100" style="display:none;"></progress>
 </div>
 
 <div id="map"></div>
-@@ -57,12 +57,13 @@
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+const map = L.map('map').setView([52.3555, -1.1743], 6); // UK center
+
+const map = L.map('map').setView([52.3555, -1.1743], 6);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+attribution: '&copy; OpenStreetMap'
+}).addTo(map);
+
+let markersLayer = L.layerGroup().addTo(map);
+
+document.getElementById('parseBtn').addEventListener('click', async () => {
+  const raw = document.getElementById('rawData').value;
+  const shifts = parseData(raw);
+  const locations = await geocodeLocations(shifts);
+  updateMap(locations);
+  await updateAll();
+});
+
+document.getElementById('mode').addEventListener('change', async () => {
+  await updateAll();
+});
+
+async function updateAll() {
 const raw = document.getElementById('rawData').value;
 const shifts = parseData(raw);
 
   document.getElementById('loading').style.display = 'block';
-  document.getElementById('progressBar').style.display = 'block';
-  document.getElementById('progressBar').value = 0;
 
 const locations = await geocodeLocations(shifts);
 updateMap(locations);
+});
 
   document.getElementById('loading').style.display = 'none';
-  document.getElementById('progressBar').style.display = 'none';
 }
 
 function parseData(raw) {
-@@ -105,7 +106,6 @@
+const lines = raw.split('\n').map(line => line.trim()).filter(line => line !== '');
+const shifts = [];
+
+for (let i = 0; i < lines.length; i++) {
+const line = lines[i];
+
+if (line.match(/£[\d.]+\/hr/)) {
+const rateMatch = line.match(/£([\d.]+)/);
+const rate = rateMatch ? parseFloat(rateMatch[1]) : null;
+
+let location = null;
+for (let j = i - 1; j >= 0; j--) {
+if (!lines[j].includes("Logo") && !lines[j].includes("£") && !lines[j].match(/AM|PM/) && lines[j].length > 1 && lines[j].length < 50) {
+location = lines[j];
+break;
+}
+}
+
+let company = "Unknown";
+for (let j = i - 1; j >= 0; j--) {
+if (lines[j].includes("Logo") || lines[j].toUpperCase().includes("LIMITED") || lines[j].toUpperCase().includes("OPTICIANS") || lines[j].toUpperCase().includes("CONCEPT") || lines[j].toUpperCase().includes("ASDA")) {
+company = lines[j].replace("Logo", "").trim();
+break;
+}
+}
+
+if (rate && location) {
+shifts.push({ location, rate, company });
+}
+}
+}
+
+return shifts;
+}
+
+async function geocodeLocations(shifts) {
 const locationMap = {};
-const uniqueLocations = {};
+  const uniqueLocations = {};
 
   // Aggregate data first
 for (const shift of shifts) {
-if (!uniqueLocations[shift.location]) {
-uniqueLocations[shift.location] = {
-@@ -117,23 +117,45 @@
-uniqueLocations[shift.location].companies.add(shift.company);
+    if (!locationMap[shift.location]) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(shift.location + ", UK")}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data && data.length > 0) {
+        locationMap[shift.location] = {
+          lat: parseFloat(data[0].lat),
+          lon: parseFloat(data[0].lon),
+          rates: [shift.rate],
+          companies: new Set([shift.company]),
+          count: 1
+        };
+      }
+    } else {
+      locationMap[shift.location].rates.push(shift.rate);
+      locationMap[shift.location].companies.add(shift.company);
+      locationMap[shift.location].count++;
+    if (!uniqueLocations[shift.location]) {
+      uniqueLocations[shift.location] = {
+        shifts: [],
+        companies: new Set()
+      };
+}
+    uniqueLocations[shift.location].shifts.push(shift.rate);
+    uniqueLocations[shift.location].companies.add(shift.company);
 }
 
   // Parallel geocode
@@ -49,49 +147,63 @@ uniqueLocations[shift.location].companies.add(shift.company);
     const res = await fetch(url);
     const data = await res.json();
     if (data && data.length > 0) {
-  const keys = Object.keys(uniqueLocations);
-  const total = keys.length;
-
-  for (let i = 0; i < total; i++) {
-    const loc = keys[i];
-    let cached = localStorage.getItem(`geo_${loc}`);
-
-    if (cached) {
-      const parsed = JSON.parse(cached);
-locationMap[loc] = {
+      locationMap[loc] = {
         lat: parseFloat(data[0].lat),
         lon: parseFloat(data[0].lon),
-        lat: parsed.lat,
-        lon: parsed.lon,
-rates: uniqueLocations[loc].shifts,
-companies: uniqueLocations[loc].companies,
-count: uniqueLocations[loc].shifts.length
-};
-    } else {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(loc + ", UK")}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data && data.length > 0) {
-        const lat = parseFloat(data[0].lat);
-        const lon = parseFloat(data[0].lon);
-
-        localStorage.setItem(`geo_${loc}`, JSON.stringify({ lat, lon }));
-
-        locationMap[loc] = {
-          lat: lat,
-          lon: lon,
-          rates: uniqueLocations[loc].shifts,
-          companies: uniqueLocations[loc].companies,
-          count: uniqueLocations[loc].shifts.length
-        };
-      }
-}
+        rates: uniqueLocations[loc].shifts,
+        companies: uniqueLocations[loc].companies,
+        count: uniqueLocations[loc].shifts.length
+      };
+    }
   });
 
   await Promise.all(geocodePromises);
-    // Update progress
-    document.getElementById('progressBar').value = ((i + 1) / total) * 100;
-  }
 
 return Object.entries(locationMap).map(([loc, data]) => ({
 name: loc,
+lat: data.lat,
+lon: data.lon,
+avgRate: data.rates.reduce((a, b) => a + b, 0) / data.rates.length,
+count: data.count,
+companies: Array.from(data.companies)
+}));
+}
+
+function updateMap(locations) {
+markersLayer.clearLayers();
+
+const mode = document.getElementById('mode').value;
+
+if (mode === 'density') {
+for (const loc of locations) {
+      const radius = 5 + loc.count * 3; // Adjust size based on count
+      const radius = 5 + loc.count * 3;
+const marker = L.circleMarker([loc.lat, loc.lon], {
+radius: radius,
+color: "blue",
+fillOpacity: 0.5
+}).bindPopup(`<b>${loc.name}</b><br>Shifts: ${loc.count}`);
+markersLayer.addLayer(marker);
+}
+} else if (mode === 'rate') {
+for (const loc of locations) {
+const color = loc.avgRate >= 60 ? "green" : loc.avgRate >= 50 ? "orange" : "red";
+const marker = L.circleMarker([loc.lat, loc.lon], {
+radius: 10,
+color,
+fillOpacity: 0.8
+}).bindPopup(`<b>${loc.name}</b><br>Avg Rate: £${loc.avgRate.toFixed(2)}`);
+markersLayer.addLayer(marker);
+}
+} else if (mode === 'company') {
+for (const loc of locations) {
+const marker = L.marker([loc.lat, loc.lon])
+.bindPopup(`<b>${loc.name}</b><br>Companies: ${loc.companies.join(", ")}`);
+markersLayer.addLayer(marker);
+}
+}
+}
+</script>
+
+</body>
+</html>
