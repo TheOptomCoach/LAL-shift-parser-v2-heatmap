@@ -34,42 +34,31 @@
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script>
-const ukLocations = {
-  "Swansea": [51.6214, -3.9436],
-  "Fleet": [51.2832, -0.8420],
-  "Staines": [51.4356, -0.5094],
-  "Pembroke Dock": [51.6927, -4.9405],
-  "Woolwich": [51.4890, 0.0648],
-  "St Austell": [50.3380, -4.7939],
-  "Bournemouth": [50.7192, -1.8808],
-  "Gwent": [51.8136, -2.9895],
-  "Wallington": [51.3580, -0.1503],
-  "Turners- Bridgewater": [51.1279, -3.0036],
-  "Gravesend": [51.4419, 0.3709],
-  // ➕ Add more as needed or send me full list to pre-fill!
-};
 
+<script>
 const map = L.map('map').setView([52.3555, -1.1743], 6);
-L.tileLayer('https://stamen-tiles.a.ssl.fastly.net/toner-lite/{z}/{x}/{y}.png', {
-  attribution: 'Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.'
+
+// ✅ Use simpler, lighter but robust tiles
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap contributors & CartoDB'
 }).addTo(map);
 
 let markersLayer = L.layerGroup().addTo(map);
 
-document.getElementById('parseBtn').addEventListener('click', () => {
-  const raw = document.getElementById('rawData').value;
-  const shifts = parseData(raw);
-  const locations = getLocations(shifts);
-  updateMap(locations);
+document.getElementById('parseBtn').addEventListener('click', async () => {
+  await updateAll();
 });
 
-document.getElementById('mode').addEventListener('change', () => {
+document.getElementById('mode').addEventListener('change', async () => {
+  await updateAll();
+});
+
+async function updateAll() {
   const raw = document.getElementById('rawData').value;
   const shifts = parseData(raw);
-  const locations = getLocations(shifts);
+  const locations = await geocodeLocations(shifts);
   updateMap(locations);
-});
+}
 
 function parseData(raw) {
   const lines = raw.split('\n').map(line => line.trim()).filter(line => line !== '');
@@ -108,25 +97,27 @@ function parseData(raw) {
   return shifts;
 }
 
-function getLocations(shifts) {
+async function geocodeLocations(shifts) {
   const locationMap = {};
 
   for (const shift of shifts) {
-    const locKey = shift.location;
-    if (ukLocations[locKey]) {
-      if (!locationMap[locKey]) {
-        locationMap[locKey] = {
-          lat: ukLocations[locKey][0],
-          lon: ukLocations[locKey][1],
+    if (!locationMap[shift.location]) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(shift.location + ", UK")}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data && data.length > 0) {
+        locationMap[shift.location] = {
+          lat: parseFloat(data[0].lat),
+          lon: parseFloat(data[0].lon),
           totals: [shift.total],
           companies: new Set([shift.company]),
           count: 1
         };
-      } else {
-        locationMap[locKey].totals.push(shift.total);
-        locationMap[locKey].companies.add(shift.company);
-        locationMap[locKey].count++;
       }
+    } else {
+      locationMap[shift.location].totals.push(shift.total);
+      locationMap[shift.location].companies.add(shift.company);
+      locationMap[shift.location].count++;
     }
   }
 
