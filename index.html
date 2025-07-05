@@ -13,8 +13,10 @@
       background: white; padding: 10px; z-index: 1000;
       border-radius: 5px;
       box-shadow: 0 0 5px rgba(0,0,0,0.3);
+      width: 300px;
     }
-    textarea { width: 100%; height: 100px; }
+    textarea { width: 100%; height: 150px; }
+    button, select { margin-top: 5px; width: 100%; }
   </style>
 </head>
 <body>
@@ -22,8 +24,6 @@
 <div id="controls">
   <textarea id="rawData" placeholder="Paste your raw shift data here..."></textarea><br>
   <button id="parseBtn">Parse & Update Map</button>
-  <br><br>
-  <label for="mode">Mode:</label>
   <select id="mode">
     <option value="density">Density</option>
     <option value="rate">Average Rate</option>
@@ -49,40 +49,59 @@ let markersLayer = L.layerGroup().addTo(map);
 document.getElementById('parseBtn').addEventListener('click', async () => {
   const raw = document.getElementById('rawData').value;
   const shifts = parseData(raw);
-
-  // Geocode locations
   const locations = await geocodeLocations(shifts);
-
   updateMap(locations);
 });
 
-document.getElementById('mode').addEventListener('change', () => {
+document.getElementById('mode').addEventListener('change', async () => {
   const raw = document.getElementById('rawData').value;
   const shifts = parseData(raw);
-  geocodeLocations(shifts).then(updateMap);
+  const locations = await geocodeLocations(shifts);
+  updateMap(locations);
 });
 
-// Parse the text data into structured objects
+// New smarter parser
 function parseData(raw) {
-  const entries = raw.split(/\n\n+/);
+  const lines = raw.split('\n').map(line => line.trim()).filter(Boolean);
   let shifts = [];
-  for (const entry of entries) {
-    const lines = entry.trim().split("\n");
-    if (lines.length < 3) continue;
+  let currentCompany = null;
 
-    const location = lines[0].trim();
-    const rateLine = lines.find(l => l.includes("£") && l.includes("/hr"));
-    const rate = rateLine ? parseFloat(rateLine.match(/£([\d.]+)/)[1]) : null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
 
-    let company = lines.find(l => l.includes("Specsavers") || l.includes("Boots") || l.includes("Virtue") || l.includes("Logo"));
-    if (!company) company = "Unknown";
+    // Detect company line
+    if (line.includes("Logo") || line.includes("LIMITED") || line.includes("Opticians") || line.includes("Specs") || line.includes("CONCEPT") || line.includes("Asda")) {
+      currentCompany = line.replace("Logo", "").trim();
+    }
 
-    shifts.push({ location, rate, company });
+    // Detect date line (skip, not needed for map)
+    if (/^\w{3} \d{1,2} \w{3} \d{4}$/.test(line)) continue;
+
+    // Detect location (heuristic: line that is not a company, not a price, not marketing)
+    if (!line.includes("£") && !line.includes("Total") && !line.includes("Book Now") && !line.includes("Quick Apply") && !line.includes("View more") && !line.includes("Negotiable") && !line.includes("AM") && !line.includes("PM") && currentCompany) {
+      const location = line;
+
+      // Look ahead for rate
+      let rate = null;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].includes("£") && lines[j].includes("/hr")) {
+          const rateMatch = lines[j].match(/£([\d.]+)/);
+          if (rateMatch) {
+            rate = parseFloat(rateMatch[1]);
+            break;
+          }
+        }
+      }
+
+      if (rate && location.length > 1) {
+        shifts.push({ location, rate, company: currentCompany });
+      }
+    }
   }
+
   return shifts;
 }
 
-// Geocode using Nominatim
 async function geocodeLocations(shifts) {
   const locationMap = {};
 
