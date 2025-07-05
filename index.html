@@ -17,9 +17,27 @@
     }
     textarea { width: 100%; height: 150px; }
     button, select { margin-top: 5px; width: 100%; }
+    #progressContainer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 5px;
+      background-color: rgba(200, 200, 200, 0.3);
+      z-index: 2000;
+      display: none;
+    }
+    #progressBar {
+      height: 100%;
+      width: 0%;
+      background-color: #007bff;
+      transition: width 0.3s ease;
+    }
   </style>
 </head>
 <body>
+
+<div id="progressContainer"><div id="progressBar"></div></div>
 
 <div id="controls">
   <textarea id="rawData" placeholder="Paste your raw shift data here..."></textarea><br>
@@ -38,7 +56,6 @@
 <script>
 const map = L.map('map').setView([52.3555, -1.1743], 6);
 
-// ✅ Use simpler, lighter but robust tiles
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   attribution: '&copy; OpenStreetMap contributors & CartoDB'
 }).addTo(map);
@@ -53,11 +70,34 @@ document.getElementById('mode').addEventListener('change', async () => {
   await updateAll();
 });
 
+function showProgress() {
+  const container = document.getElementById('progressContainer');
+  const bar = document.getElementById('progressBar');
+  container.style.display = 'block';
+  bar.style.width = '0%';
+  setTimeout(() => bar.style.width = '60%', 50); // simulate intermediate progress
+}
+
+function hideProgress() {
+  const bar = document.getElementById('progressBar');
+  bar.style.width = '100%';
+  setTimeout(() => {
+    document.getElementById('progressContainer').style.display = 'none';
+    bar.style.width = '0%';
+  }, 500);
+}
+
 async function updateAll() {
-  const raw = document.getElementById('rawData').value;
-  const shifts = parseData(raw);
-  const locations = await geocodeLocations(shifts);
-  updateMap(locations);
+  showProgress();
+  try {
+    const raw = document.getElementById('rawData').value;
+    const shifts = parseData(raw);
+    const locations = await geocodeLocations(shifts);
+    updateMap(locations);
+  } catch (error) {
+    alert("Error occurred during processing: " + error);
+  }
+  hideProgress();
 }
 
 function parseData(raw) {
@@ -67,7 +107,6 @@ function parseData(raw) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Identify "Total" line
     if (line.match(/Total:\s*£[\d,.]+/)) {
       const totalMatch = line.match(/Total:\s*£([\d,.]+)/);
       const total = totalMatch ? parseFloat(totalMatch[1].replace(/,/g, '')) : null;
