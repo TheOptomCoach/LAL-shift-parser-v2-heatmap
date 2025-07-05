@@ -34,7 +34,6 @@
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
 
 <script>
 const map = L.map('map').setView([52.3555, -1.1743], 6); // UK center
@@ -43,7 +42,6 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap'
 }).addTo(map);
 
-let heatLayer;
 let markersLayer = L.layerGroup().addTo(map);
 
 document.getElementById('parseBtn').addEventListener('click', async () => {
@@ -67,12 +65,10 @@ function parseData(raw) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Identify rate line
     if (line.match(/£[\d.]+\/hr/)) {
       const rateMatch = line.match(/£([\d.]+)/);
       const rate = rateMatch ? parseFloat(rateMatch[1]) : null;
 
-      // Look upwards for location (usually 1 or 2 lines above)
       let location = null;
       for (let j = i - 1; j >= 0; j--) {
         if (!lines[j].includes("Logo") && !lines[j].includes("£") && !lines[j].match(/AM|PM/) && lines[j].length > 1 && lines[j].length < 50) {
@@ -81,7 +77,6 @@ function parseData(raw) {
         }
       }
 
-      // Look upwards for company
       let company = "Unknown";
       for (let j = i - 1; j >= 0; j--) {
         if (lines[j].includes("Logo") || lines[j].toUpperCase().includes("LIMITED") || lines[j].toUpperCase().includes("OPTICIANS") || lines[j].toUpperCase().includes("CONCEPT") || lines[j].toUpperCase().includes("ASDA")) {
@@ -134,16 +129,20 @@ async function geocodeLocations(shifts) {
 }
 
 function updateMap(locations) {
-  if (heatLayer) {
-    map.removeLayer(heatLayer);
-  }
   markersLayer.clearLayers();
 
   const mode = document.getElementById('mode').value;
 
   if (mode === 'density') {
-    const heatPoints = locations.map(loc => [loc.lat, loc.lon, loc.count]);
-    heatLayer = L.heatLayer(heatPoints, { radius: 25, maxZoom: 12 }).addTo(map);
+    for (const loc of locations) {
+      const radius = 5 + loc.count * 3; // Adjust size based on count
+      const marker = L.circleMarker([loc.lat, loc.lon], {
+        radius: radius,
+        color: "blue",
+        fillOpacity: 0.5
+      }).bindPopup(`<b>${loc.name}</b><br>Shifts: ${loc.count}`);
+      markersLayer.addLayer(marker);
+    }
   } else if (mode === 'rate') {
     for (const loc of locations) {
       const color = loc.avgRate >= 60 ? "green" : loc.avgRate >= 50 ? "orange" : "red";
