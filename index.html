@@ -60,41 +60,38 @@ document.getElementById('mode').addEventListener('change', async () => {
   updateMap(locations);
 });
 
-// New smarter parser
 function parseData(raw) {
-  const lines = raw.split('\n').map(line => line.trim()).filter(Boolean);
-  let shifts = [];
-  let currentCompany = null;
+  const lines = raw.split('\n').map(line => line.trim()).filter(line => line !== '');
+  const shifts = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Detect company line
-    if (line.includes("Logo") || line.includes("LIMITED") || line.includes("Opticians") || line.includes("Specs") || line.includes("CONCEPT") || line.includes("Asda")) {
-      currentCompany = line.replace("Logo", "").trim();
-    }
+    // Identify rate line
+    if (line.match(/£[\d.]+\/hr/)) {
+      const rateMatch = line.match(/£([\d.]+)/);
+      const rate = rateMatch ? parseFloat(rateMatch[1]) : null;
 
-    // Detect date line (skip, not needed for map)
-    if (/^\w{3} \d{1,2} \w{3} \d{4}$/.test(line)) continue;
-
-    // Detect location (heuristic: line that is not a company, not a price, not marketing)
-    if (!line.includes("£") && !line.includes("Total") && !line.includes("Book Now") && !line.includes("Quick Apply") && !line.includes("View more") && !line.includes("Negotiable") && !line.includes("AM") && !line.includes("PM") && currentCompany) {
-      const location = line;
-
-      // Look ahead for rate
-      let rate = null;
-      for (let j = i + 1; j < lines.length; j++) {
-        if (lines[j].includes("£") && lines[j].includes("/hr")) {
-          const rateMatch = lines[j].match(/£([\d.]+)/);
-          if (rateMatch) {
-            rate = parseFloat(rateMatch[1]);
-            break;
-          }
+      // Look upwards for location (usually 1 or 2 lines above)
+      let location = null;
+      for (let j = i - 1; j >= 0; j--) {
+        if (!lines[j].includes("Logo") && !lines[j].includes("£") && !lines[j].match(/AM|PM/) && lines[j].length > 1 && lines[j].length < 50) {
+          location = lines[j];
+          break;
         }
       }
 
-      if (rate && location.length > 1) {
-        shifts.push({ location, rate, company: currentCompany });
+      // Look upwards for company
+      let company = "Unknown";
+      for (let j = i - 1; j >= 0; j--) {
+        if (lines[j].includes("Logo") || lines[j].toUpperCase().includes("LIMITED") || lines[j].toUpperCase().includes("OPTICIANS") || lines[j].toUpperCase().includes("CONCEPT") || lines[j].toUpperCase().includes("ASDA")) {
+          company = lines[j].replace("Logo", "").trim();
+          break;
+        }
+      }
+
+      if (rate && location) {
+        shifts.push({ location, rate, company });
       }
     }
   }
