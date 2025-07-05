@@ -1,180 +1,97 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>UK Locum Optometry Shifts Map</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-  <style>
-    body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
-    #map { height: 100vh; }
-    #controls {
-      position: absolute;
-      top: 10px; left: 10px;
-      background: white; padding: 10px; z-index: 1000;
-      border-radius: 5px;
-      box-shadow: 0 0 5px rgba(0,0,0,0.3);
-      width: 300px;
-    }
-    textarea { width: 100%; height: 150px; }
+width: 300px;
+}
+textarea { width: 100%; height: 150px; }
     button, select { margin-top: 5px; width: 100%; }
-    #progressContainer {
-      position: absolute; top: 0; left: 0;
-      width: 100%; height: 5px;
-      background: rgba(200,200,200,0.3);
-      z-index: 2000; display: none;
-    }
-    #progressBar {
-      width: 0%; height: 100%; background: #007bff;
-      transition: width 0.3s ease;
-    }
-  </style>
+    button, select, progress { margin-top: 5px; width: 100%; }
+#loading { margin-top: 5px; color: red; font-weight: bold; display: none; }
+</style>
 </head>
-<body>
-
-<div id="progressContainer"><div id="progressBar"></div></div>
-
-<div id="controls">
-  <textarea id="rawData" placeholder="Paste your raw shift data here..."></textarea><br>
-  <button id="parseBtn">Parse & Update Map</button>
-  <select id="mode">
-    <option value="density">Density</option>
-    <option value="total">Average Total Pay</option>
-    <option value="company">Companies</option>
-  </select>
+@@ -30,7 +30,7 @@
+<option value="rate">Average Rate</option>
+<option value="company">Companies</option>
+</select>
+  <div id="loading">Loading...</div>
+  <progress id="progressBar" value="0" max="100" style="display:none;"></progress>
 </div>
 
 <div id="map"></div>
+@@ -57,12 +57,13 @@
+const raw = document.getElementById('rawData').value;
+const shifts = parseData(raw);
 
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script>
-const map = L.map('map').setView([52.3555, -1.1743], 6);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; OpenStreetMap & CartoDB'
-}).addTo(map);
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('progressBar').style.display = 'block';
+  document.getElementById('progressBar').value = 0;
 
-let markersLayer = L.layerGroup().addTo(map);
-let lastRendered = '';
+const locations = await geocodeLocations(shifts);
+updateMap(locations);
 
-document.getElementById('parseBtn').addEventListener('click', updateAll);
-document.getElementById('mode').addEventListener('change', updateAll);
-
-function showProgress() {
-  const c = document.getElementById('progressContainer'),
-        b = document.getElementById('progressBar');
-  c.style.display = 'block'; b.style.width = '0%';
-  setTimeout(() => b.style.width = '60%', 50);
-}
-function hideProgress() {
-  const c = document.getElementById('progressContainer'),
-        b = document.getElementById('progressBar');
-  b.style.width = '100%';
-  setTimeout(() => { c.style.display = 'none'; b.style.width = '0%'; }, 300);
-}
-
-async function updateAll() {
-  showProgress();
-  try {
-    const raw = document.getElementById('rawData').value;
-    const shifts = parseData(raw);
-    const locations = await geocodeLocations(shifts);
-    const renderKey = JSON.stringify({mode: document.getElementById('mode').value, locs: locations});
-    if (renderKey !== lastRendered) {
-      updateMap(locations);
-      lastRendered = renderKey;
-    }
-  } catch (e) {
-    console.error(e);
-    alert('Error: ' + e.message);
-  }
-  hideProgress();
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('progressBar').style.display = 'none';
 }
 
 function parseData(raw) {
-  const lines = raw.split('\n').map(l => l.trim()).filter(l => l);
-  const shifts = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].match(/£[\d.]+\/hr/)) {
-      const rate = parseFloat(lines[i].match(/£([\d.]+)\/hr/)[1]);
-      const company = lines[i-2] && !lines[i-2].match(/£|AM|PM|Logo/) ? lines[i-2] : 'Unknown';
-      let location = null;
-      for (let j = i+1; j < lines.length; j++) {
-        if (lines[j].match(/Total:\s*£[\d,.]+/)) {
-          const total = parseFloat(lines[j].match(/£([\d,.]+)/)[1].replace(/,/g,''));
-          location = lines.slice(i+1, j).find(l =>
-            !l.includes('Logo') && !l.match(/£|AM|PM/) && l.length>1 && l.length<50
-          );
-          if (location) shifts.push({ location, total, company });
-          break;
-        }
-      }
-    }
-  }
-  return shifts;
+@@ -105,7 +106,6 @@
+const locationMap = {};
+const uniqueLocations = {};
+
+  // Aggregate data first
+for (const shift of shifts) {
+if (!uniqueLocations[shift.location]) {
+uniqueLocations[shift.location] = {
+@@ -117,23 +117,45 @@
+uniqueLocations[shift.location].companies.add(shift.company);
 }
 
-async function geocodeLocations(shifts) {
-  const cacheKey = 'geocodeCache',
-        cache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-  const unique = [...new Set(shifts.map(s => s.location))].filter(l => !cache[l]);
-  const batchSize = 10;
+  // Parallel geocode
+  const geocodePromises = Object.keys(uniqueLocations).map(async loc => {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(loc + ", UK")}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data && data.length > 0) {
+  const keys = Object.keys(uniqueLocations);
+  const total = keys.length;
 
-  for (let i = 0; i < unique.length; i += batchSize) {
-    const batch = unique.slice(i, i + batchSize);
-    const resArr = await Promise.all(batch.map(async loc => {
-      try {
-        const r = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(loc+", UK")}`,
-          { headers: { 'User-Agent': 'LocumMapBot/1.0 (TheOptomCoach@Outlook.com)' } }
-        );
-        const d = await r.json();
-        if (d?.length) cache[loc] = { lat: +d[0].lat, lon: +d[0].lon };
-      } catch (e) { console.warn('Geocode error', loc, e); }
-    }));
-    await new Promise(r => setTimeout(r, 250));
-  }
-  localStorage.setItem(cacheKey, JSON.stringify(cache));
+  for (let i = 0; i < total; i++) {
+    const loc = keys[i];
+    let cached = localStorage.getItem(`geo_${loc}`);
 
-  const aggregated = {};
-  for (const shift of shifts) {
-    const loc = shift.location;
-    const c = cache[loc];
-    if (!c) continue;
-    if (!aggregated[loc]) aggregated[loc] = { ...c, totals: [], companies: new Set(), count: 0 };
-    const a = aggregated[loc];
-    a.totals.push(shift.total);
-    a.companies.add(shift.company);
-    a.count++;
-  }
-
-  return Object.entries(aggregated).map(([loc,data]) => ({
-    name: loc, lat: data.lat, lon: data.lon,
-    avgTotal: data.totals.reduce((a,b)=>a+b)/data.totals.length,
-    count: data.count, companies: [...data.companies]
-  }));
-}
-
-function updateMap(locs) {
-  markersLayer.clearLayers();
-  const mode = document.getElementById('mode').value;
-
-  for (const loc of locs) {
-    let marker;
-    if (mode === 'density') {
-      marker = L.circleMarker([loc.lat, loc.lon], {
-        radius: 5 + loc.count*3, color: 'blue', fillOpacity: .5
-      }).bindPopup(`<b>${loc.name}</b><br>Shifts: ${loc.count}`);
-    } else if (mode === 'total') {
-      const color = loc.avgTotal >=450 ? 'green' : loc.avgTotal >=350 ? 'orange' : 'red';
-      marker = L.circleMarker([loc.lat, loc.lon], { radius:10, color, fillOpacity:.8 })
-        .bindPopup(`<b>${loc.name}</b><br>Avg Total: £${loc.avgTotal.toFixed(2)} across ${loc.count} shifts`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+locationMap[loc] = {
+        lat: parseFloat(data[0].lat),
+        lon: parseFloat(data[0].lon),
+        lat: parsed.lat,
+        lon: parsed.lon,
+rates: uniqueLocations[loc].shifts,
+companies: uniqueLocations[loc].companies,
+count: uniqueLocations[loc].shifts.length
+};
     } else {
-      marker = L.marker([loc.lat, loc.lon])
-        .bindPopup(`<b>${loc.name}</b><br>Companies: ${loc.companies.join(', ')}`);
-    }
-    markersLayer.addLayer(marker);
-  }
-}
-</script>
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(loc + ", UK")}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data && data.length > 0) {
+        const lat = parseFloat(data[0].lat);
+        const lon = parseFloat(data[0].lon);
 
-</body>
-</html>
+        localStorage.setItem(`geo_${loc}`, JSON.stringify({ lat, lon }));
+
+        locationMap[loc] = {
+          lat: lat,
+          lon: lon,
+          rates: uniqueLocations[loc].shifts,
+          companies: uniqueLocations[loc].companies,
+          count: uniqueLocations[loc].shifts.length
+        };
+      }
+}
+  });
+
+  await Promise.all(geocodePromises);
+    // Update progress
+    document.getElementById('progressBar').value = ((i + 1) / total) * 100;
+  }
+
+return Object.entries(locationMap).map(([loc, data]) => ({
+name: loc,
