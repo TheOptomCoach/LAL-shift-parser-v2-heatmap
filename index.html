@@ -28,12 +28,24 @@
     }
     #downloadBtn { background-color: #4CAF50; color: white; }
     #clearBtn { background-color: #f44336; color: white; }
+    #replaceMode { margin-top: 5px; }
+    .checkbox-container { 
+      display: flex; 
+      align-items: center; 
+      gap: 5px;
+      font-size: 14px;
+      margin-bottom: 5px;
+    }
   </style>
 </head>
 <body>
 
 <div id="controls">
   <textarea id="rawData" placeholder="Paste your raw shift data here..."></textarea><br>
+  <div class="checkbox-container">
+    <input type="checkbox" id="replaceMode" />
+    <label for="replaceMode">Replace existing data (instead of adding)</label>
+  </div>
   <div class="button-group">
     <button id="parseBtn">Parse & Update Map</button>
     <button id="saveBtn">Save Data</button>
@@ -45,7 +57,7 @@
   </select>
   <div class="button-group">
     <button id="downloadBtn">Download with Data</button>
-    <button id="clearBtn">Clear Saved Data</button>
+    <button id="clearBtn">Clear All Data</button>
   </div>
   <progress id="progressBar" value="0" max="100" style="display:none;"></progress>
   <div id="dataStatus"></div>
@@ -78,7 +90,6 @@ window.addEventListener('load', () => {
   if (embeddedData && embeddedData.shifts) {
     currentShifts = embeddedData.shifts;
     currentLocations = embeddedData.locations;
-    document.getElementById('rawData').value = embeddedData.rawData || '';
     updateMap(currentLocations);
     updateDataStatus(`Loaded ${currentShifts.length} shifts from embedded data`);
   } else {
@@ -105,7 +116,6 @@ document.getElementById('saveBtn').addEventListener('click', () => {
   const dataToSave = {
     shifts: currentShifts,
     locations: currentLocations,
-    rawData: document.getElementById('rawData').value,
     savedAt: new Date().toISOString()
   };
   
@@ -156,6 +166,12 @@ function updateDataStatus(message) {
   }
 }
 
+// Helper function to create a unique identifier for a shift
+function getShiftKey(shift) {
+  // Create a key based on location, company, and total to identify duplicates
+  return `${shift.location}_${shift.company}_${shift.total}`;
+}
+
 async function updateAll() {
   const raw = document.getElementById('rawData').value;
   if (!raw.trim()) {
@@ -163,21 +179,66 @@ async function updateAll() {
     return;
   }
   
-  currentShifts = parseData(raw);
+  const newShifts = parseData(raw);
   
-  if (currentShifts.length === 0) {
+  if (newShifts.length === 0) {
     alert('No valid shifts found in the data. Please check the format.');
     return;
+  }
+
+  const replaceMode = document.getElementById('replaceMode').checked;
+  
+  let shiftsToProcess;
+  let addedCount = 0;
+  let duplicateCount = 0;
+  
+  if (replaceMode) {
+    // Replace mode: use only new shifts
+    shiftsToProcess = newShifts;
+    currentShifts = newShifts;
+    addedCount = newShifts.length;
+  } else {
+    // Add mode: merge with existing shifts, avoiding duplicates
+    const existingKeys = new Set(currentShifts.map(getShiftKey));
+    const uniqueNewShifts = [];
+    
+    for (const shift of newShifts) {
+      const key = getShiftKey(shift);
+      if (!existingKeys.has(key)) {
+        uniqueNewShifts.push(shift);
+        existingKeys.add(key);
+        addedCount++;
+      } else {
+        duplicateCount++;
+      }
+    }
+    
+    // Add unique new shifts to current shifts
+    currentShifts = [...currentShifts, ...uniqueNewShifts];
+    shiftsToProcess = currentShifts;
   }
 
   document.getElementById('progressBar').style.display = 'block';
   document.getElementById('progressBar').value = 0;
 
-  currentLocations = await geocodeLocations(currentShifts);
+  currentLocations = await geocodeLocations(shiftsToProcess);
   updateMap(currentLocations);
 
   document.getElementById('progressBar').style.display = 'none';
-  updateDataStatus(`Parsed ${currentShifts.length} shifts`);
+  
+  // Clear the input textarea after successful processing
+  document.getElementById('rawData').value = '';
+  
+  // Update status with appropriate message
+  if (replaceMode) {
+    updateDataStatus(`Replaced with ${addedCount} shifts`);
+  } else {
+    let statusMsg = `Added ${addedCount} new shifts`;
+    if (duplicateCount > 0) {
+      statusMsg += ` (${duplicateCount} duplicates skipped)`;
+    }
+    updateDataStatus(statusMsg);
+  }
 }
 
 function parseData(raw) {
