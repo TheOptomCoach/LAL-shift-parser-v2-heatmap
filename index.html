@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>UK Locum Optometry Shifts Heatmap</title>
+  <title>UK Locum Optometry Shifts Map</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
@@ -17,7 +17,6 @@
     }
     textarea { width: 100%; height: 150px; }
     button, select, progress { margin-top: 5px; width: 100%; }
-    #loading { margin-top: 5px; color: red; font-weight: bold; display: none; }
   </style>
 </head>
 <body>
@@ -27,7 +26,7 @@
   <button id="parseBtn">Parse & Update Map</button>
   <select id="mode">
     <option value="density">Density</option>
-    <option value="rate">Average Rate</option>
+    <option value="total">Total Pay</option>
     <option value="company">Companies</option>
   </select>
   <progress id="progressBar" value="0" max="100" style="display:none;"></progress>
@@ -73,9 +72,9 @@ function parseData(raw) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    if (line.match(/£[\d.]+\/hr/)) {
-      const rateMatch = line.match(/£([\d.]+)/);
-      const rate = rateMatch ? parseFloat(rateMatch[1]) : null;
+    if (line.match(/Total:\s*£[\d,.]+/)) {
+      const totalMatch = line.match(/Total:\s*£([\d,.]+)/);
+      const total = totalMatch ? parseFloat(totalMatch[1].replace(/,/g, '')) : null;
 
       let location = null;
       for (let j = i - 1; j >= 0; j--) {
@@ -93,8 +92,8 @@ function parseData(raw) {
         }
       }
 
-      if (rate && location) {
-        shifts.push({ location, rate, company });
+      if (total && location) {
+        shifts.push({ location, total, company });
       }
     }
   }
@@ -104,64 +103,33 @@ function parseData(raw) {
 
 async function geocodeLocations(shifts) {
   const locationMap = {};
-  const uniqueLocations = {};
 
   for (const shift of shifts) {
-    if (!uniqueLocations[shift.location]) {
-      uniqueLocations[shift.location] = {
-        shifts: [],
-        companies: new Set()
-      };
-    }
-    uniqueLocations[shift.location].shifts.push(shift.rate);
-    uniqueLocations[shift.location].companies.add(shift.company);
-  }
-
-  const keys = Object.keys(uniqueLocations);
-  const total = keys.length;
-
-  for (let i = 0; i < total; i++) {
-    const loc = keys[i];
-    let cached = localStorage.getItem(`geo_${loc}`);
-
-    if (cached) {
-      const parsed = JSON.parse(cached);
-      locationMap[loc] = {
-        lat: parsed.lat,
-        lon: parsed.lon,
-        rates: uniqueLocations[loc].shifts,
-        companies: uniqueLocations[loc].companies,
-        count: uniqueLocations[loc].shifts.length
-      };
-    } else {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(loc + ", UK")}`;
+    if (!locationMap[shift.location]) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(shift.location + ", UK")}`;
       const res = await fetch(url);
       const data = await res.json();
       if (data && data.length > 0) {
-        const lat = parseFloat(data[0].lat);
-        const lon = parseFloat(data[0].lon);
-
-        localStorage.setItem(`geo_${loc}`, JSON.stringify({ lat, lon }));
-
-        locationMap[loc] = {
-          lat: lat,
-          lon: lon,
-          rates: uniqueLocations[loc].shifts,
-          companies: uniqueLocations[loc].companies,
-          count: uniqueLocations[loc].shifts.length
+        locationMap[shift.location] = {
+          lat: parseFloat(data[0].lat),
+          lon: parseFloat(data[0].lon),
+          totals: [shift.total],
+          companies: new Set([shift.company]),
+          count: 1
         };
       }
+    } else {
+      locationMap[shift.location].totals.push(shift.total);
+      locationMap[shift.location].companies.add(shift.company);
+      locationMap[shift.location].count++;
     }
-
-    // Update progress
-    document.getElementById('progressBar').value = ((i + 1) / total) * 100;
   }
 
   return Object.entries(locationMap).map(([loc, data]) => ({
     name: loc,
     lat: data.lat,
     lon: data.lon,
-    avgRate: data.rates.reduce((a, b) => a + b, 0) / data.rates.length,
+    totals: data.totals,
     count: data.count,
     companies: Array.from(data.companies)
   }));
@@ -181,15 +149,17 @@ function updateMap(locations) {
       }).bindPopup(`<b>${loc.name}</b><br>Shifts: ${loc.count}`);
       markersLayer.addLayer(marker);
     }
-  } else if (mode === 'rate') {
+  } else if (mode === 'total') {
     for (const loc of locations) {
-      const color = loc.avgRate >= 60 ? "green" : loc.avgRate >= 50 ? "orange" : "red";
-      const marker = L.circleMarker([loc.lat, loc.lon], {
-        radius: 10,
-        color,
-        fillOpacity: 0.8
-      }).bindPopup(`<b>${loc.name}</b><br>Avg Rate: £${loc.avgRate.toFixed(2)}`);
-      markersLayer.addLayer(marker);
+      for (const total of loc.totals) {
+        const color = total >= 450 ? "green" : total >= 350 ? "orange" : "red";
+        const marker = L.circleMarker([loc.lat, loc.lon], {
+          radius: 10,
+          color,
+          fillOpacity: 0.8
+        }).bindPopup(`<b>${loc.name}</b><br>Total Pay: £${total.toFixed(2)}`);
+        markersLayer.addLayer(marker);
+      }
     }
   } else if (mode === 'company') {
     for (const loc of locations) {
