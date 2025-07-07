@@ -77,9 +77,29 @@ function parseData(raw) {
       const total = totalMatch ? parseFloat(totalMatch[1].replace(/,/g, '')) : null;
 
       let location = null;
+      // Look for location - for Asda it's usually a line containing "Optical"
       for (let j = i - 1; j >= 0; j--) {
-        if (!lines[j].includes("Logo") && !lines[j].includes("£") && !lines[j].match(/AM|PM/) && lines[j].length > 1 && lines[j].length < 50) {
-          location = lines[j];
+        const candidateLine = lines[j];
+        
+        // Skip lines with certain patterns
+        if (candidateLine.includes("Logo") || 
+            candidateLine.includes("£") || 
+            candidateLine.match(/^\d{2}:\d{2}\s*(AM|PM)\s*-\s*\d{2}:\d{2}\s*(AM|PM)$/) ||
+            candidateLine.match(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d+/) ||
+            candidateLine === "Negotiable" ||
+            candidateLine === "Quick Apply" ||
+            candidateLine === "View more") {
+          continue;
+        }
+        
+        // Check if this could be a location
+        if (candidateLine.length > 1 && candidateLine.length < 100) {
+          // For Asda stores, extract just the location part (remove "Optical" suffix)
+          if (candidateLine.includes("Optical")) {
+            location = candidateLine.replace(" Optical", "").trim();
+          } else {
+            location = candidateLine;
+          }
           break;
         }
       }
