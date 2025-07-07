@@ -247,24 +247,24 @@ function parseData(raw) {
 
   // Check if this is Vision Express format
   const isVisionExpress = raw.includes("Practice\tShift Dates\tRate") || 
-                         raw.includes("Showing 1 to") ||
-                         (raw.includes("mi\n") && raw.includes("AM - ") && raw.includes("PM\n£"));
+                         raw.includes("Available Shifts") ||
+                         raw.includes("Details\nFavorite\nView");
 
   if (isVisionExpress) {
     // Parse Vision Express format
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
-      // Look for lines that are just a price (e.g., "£440")
-      if (line.match(/^£[\d,.]+$/)) {
-        const total = parseFloat(line.substring(1).replace(/,/g, ''));
+      // Look for UK postcode pattern
+      if (line.match(/^[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}$/)) {
+        const postcode = line;
         
-        // Look backwards for the postcode
-        let postcode = null;
-        for (let j = i - 1; j >= 0; j--) {
-          // UK postcode pattern
-          if (lines[j].match(/^[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}$/)) {
-            postcode = lines[j];
+        // Look forward for the price (should be within next 10 lines)
+        let total = null;
+        for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+          // Match price pattern with or without comma
+          if (lines[j].match(/^£[\d,]+$/)) {
+            total = parseFloat(lines[j].substring(1).replace(/,/g, ''));
             break;
           }
         }
