@@ -86,7 +86,7 @@ function parseData(raw) {
 
       let company = "Unknown";
       for (let j = i - 1; j >= 0; j--) {
-        if (lines[j].includes("Logo") || lines[j].toUpperCase().includes("LIMITED") || lines[j].toUpperCase().includes("OPTICIANS") || lines[j].toUpperCase().includes("CONCEPT") || lines[j].toUpperCase().includes("ASDA")) {
+        if (lines[j].includes("Logo")) {
           company = lines[j].replace("Logo", "").trim();
           break;
         }
@@ -104,34 +104,59 @@ function parseData(raw) {
 async function geocodeLocations(shifts) {
   const locationMap = {};
 
+  const uniqueLocations = {};
   for (const shift of shifts) {
-    if (!locationMap[shift.location]) {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(shift.location + ", UK")}`;
+    if (!uniqueLocations[shift.location]) {
+      uniqueLocations[shift.location] = [];
+    }
+    uniqueLocations[shift.location].push(shift);
+  }
+
+  const keys = Object.keys(uniqueLocations);
+  const total = keys.length;
+
+  for (let i = 0; i < total; i++) {
+    const loc = keys[i];
+
+    let cached = localStorage.getItem(`geo_${loc}`);
+    let lat, lon;
+
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      lat = parsed.lat;
+      lon = parsed.lon;
+    } else {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(loc + ", UK")}`;
       const res = await fetch(url);
       const data = await res.json();
       if (data && data.length > 0) {
-        locationMap[shift.location] = {
-          lat: parseFloat(data[0].lat),
-          lon: parseFloat(data[0].lon),
-          totals: [shift.total],
-          companies: new Set([shift.company]),
-          count: 1
-        };
+        lat = parseFloat(data[0].lat);
+        lon = parseFloat(data[0].lon);
+        localStorage.setItem(`geo_${loc}`, JSON.stringify({ lat, lon }));
       }
-    } else {
-      locationMap[shift.location].totals.push(shift.total);
-      locationMap[shift.location].companies.add(shift.company);
-      locationMap[shift.location].count++;
     }
+
+    if (lat && lon) {
+      locationMap[loc] = {
+        lat,
+        lon,
+        shifts: uniqueLocations[loc],
+        count: uniqueLocations[loc].length,
+        companies: [...new Set(uniqueLocations[loc].map(s => s.company))]
+      };
+    }
+
+    // Update progress
+    document.getElementById('progressBar').value = ((i + 1) / total) * 100;
   }
 
   return Object.entries(locationMap).map(([loc, data]) => ({
     name: loc,
     lat: data.lat,
     lon: data.lon,
-    totals: data.totals,
+    shifts: data.shifts,
     count: data.count,
-    companies: Array.from(data.companies)
+    companies: data.companies
   }));
 }
 
@@ -151,13 +176,13 @@ function updateMap(locations) {
     }
   } else if (mode === 'total') {
     for (const loc of locations) {
-      for (const total of loc.totals) {
-        const color = total >= 450 ? "green" : total >= 350 ? "orange" : "red";
+      for (const shift of loc.shifts) {
+        const color = shift.total >= 450 ? "green" : shift.total >= 350 ? "orange" : "red";
         const marker = L.circleMarker([loc.lat, loc.lon], {
           radius: 10,
           color,
           fillOpacity: 0.8
-        }).bindPopup(`<b>${loc.name}</b><br>Total Pay: £${total.toFixed(2)}`);
+        }).bindPopup(`<b>${loc.name}</b><br>Total Pay: £${shift.total.toFixed(2)}<br>Company: ${shift.company}`);
         markersLayer.addLayer(marker);
       }
     }
