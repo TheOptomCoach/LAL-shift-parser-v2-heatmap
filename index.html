@@ -245,51 +245,83 @@ function parseData(raw) {
   const lines = raw.split('\n').map(line => line.trim()).filter(line => line !== '');
   const shifts = [];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  // Check if this is Vision Express format
+  const isVisionExpress = raw.includes("Practice\tShift Dates\tRate") || 
+                         raw.includes("Showing 1 to") ||
+                         (raw.includes("mi\n") && raw.includes("AM - ") && raw.includes("PM\n£"));
 
-    if (line.match(/Total:\s*£[\d,.]+/)) {
-      const totalMatch = line.match(/Total:\s*£([\d,.]+)/);
-      const total = totalMatch ? parseFloat(totalMatch[1].replace(/,/g, '')) : null;
-
-      let location = null;
-      // Look for location - for Asda it's usually a line containing "Optical"
-      for (let j = i - 1; j >= 0; j--) {
-        const candidateLine = lines[j];
+  if (isVisionExpress) {
+    // Parse Vision Express format
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Look for lines that are just a price (e.g., "£440")
+      if (line.match(/^£[\d,.]+$/)) {
+        const total = parseFloat(line.substring(1).replace(/,/g, ''));
         
-        // Skip lines with certain patterns
-        if (candidateLine.includes("Logo") || 
-            candidateLine.includes("£") || 
-            candidateLine.match(/^\d{2}:\d{2}\s*(AM|PM)\s*-\s*\d{2}:\d{2}\s*(AM|PM)$/) ||
-            candidateLine.match(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d+/) ||
-            candidateLine === "Negotiable" ||
-            candidateLine === "Quick Apply" ||
-            candidateLine === "View more") {
-          continue;
-        }
-        
-        // Check if this could be a location
-        if (candidateLine.length > 1 && candidateLine.length < 100) {
-          // For Asda stores, extract just the location part (remove "Optical" suffix)
-          if (candidateLine.includes("Optical")) {
-            location = candidateLine.replace(" Optical", "").trim();
-          } else {
-            location = candidateLine;
+        // Look backwards for the postcode
+        let postcode = null;
+        for (let j = i - 1; j >= 0; j--) {
+          // UK postcode pattern
+          if (lines[j].match(/^[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}$/)) {
+            postcode = lines[j];
+            break;
           }
-          break;
+        }
+        
+        if (total && postcode) {
+          shifts.push({ location: postcode, total, company: "Vision Express" });
         }
       }
+    }
+  } else {
+    // Parse original format (Asda, etc.)
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
 
-      let company = "Unknown";
-      for (let j = i - 1; j >= 0; j--) {
-        if (lines[j].includes("Logo")) {
-          company = lines[j].replace("Logo", "").trim();
-          break;
+      if (line.match(/Total:\s*£[\d,.]+/)) {
+        const totalMatch = line.match(/Total:\s*£([\d,.]+)/);
+        const total = totalMatch ? parseFloat(totalMatch[1].replace(/,/g, '')) : null;
+
+        let location = null;
+        // Look for location - for Asda it's usually a line containing "Optical"
+        for (let j = i - 1; j >= 0; j--) {
+          const candidateLine = lines[j];
+          
+          // Skip lines with certain patterns
+          if (candidateLine.includes("Logo") || 
+              candidateLine.includes("£") || 
+              candidateLine.match(/^\d{2}:\d{2}\s*(AM|PM)\s*-\s*\d{2}:\d{2}\s*(AM|PM)$/) ||
+              candidateLine.match(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d+/) ||
+              candidateLine === "Negotiable" ||
+              candidateLine === "Quick Apply" ||
+              candidateLine === "View more") {
+            continue;
+          }
+          
+          // Check if this could be a location
+          if (candidateLine.length > 1 && candidateLine.length < 100) {
+            // For Asda stores, extract just the location part (remove "Optical" suffix)
+            if (candidateLine.includes("Optical")) {
+              location = candidateLine.replace(" Optical", "").trim();
+            } else {
+              location = candidateLine;
+            }
+            break;
+          }
         }
-      }
 
-      if (total && location) {
-        shifts.push({ location, total, company });
+        let company = "Unknown";
+        for (let j = i - 1; j >= 0; j--) {
+          if (lines[j].includes("Logo")) {
+            company = lines[j].replace("Logo", "").trim();
+            break;
+          }
+        }
+
+        if (total && location) {
+          shifts.push({ location, total, company });
+        }
       }
     }
   }
